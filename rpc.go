@@ -153,6 +153,15 @@ func (r *rpcClient) ReceiveDeferred(ctx context.Context, mode ReceiveMode, seque
 		return nil, err
 	}
 
+	if rsp.Code == 401 {
+		if err = r.renewRPCClient(ctx); err == nil {
+			rsp, err = link.RetryableRPC(ctx, 5, 5*time.Second, msg)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if rsp.Code == 204 {
 		return nil, ErrNoMessages{}
 	}
@@ -258,6 +267,15 @@ func (r *rpcClient) GetNextPage(ctx context.Context, fromSequenceNumber int64, m
 	if err != nil {
 		tab.For(ctx).Error(err)
 		return nil, err
+	}
+
+	if rsp.Code == 401 {
+		if err = r.renewRPCClient(ctx); err == nil {
+			rsp, err = link.RetryableRPC(ctx, 5, 5*time.Second, msg)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if rsp.Code == 204 {
@@ -388,6 +406,15 @@ func (r *rpcClient) RenewLocks(ctx context.Context, messages ...*Message) error 
 	if err != nil {
 		tab.For(ctx).Error(err)
 		return err
+	}
+
+	if response.Code == 401 {
+		if err = r.renewRPCClient(ctx); err == nil {
+			response, err = rpcLink.RetryableRPC(ctx, 5, 5*time.Second, renewRequestMsg)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	if response.Code != 200 {
@@ -538,6 +565,15 @@ func (r *rpcClient) ScheduleAt(ctx context.Context, enqueueTime time.Time, messa
 		return nil, err
 	}
 
+	if resp.Code == 401 {
+		if err = r.renewRPCClient(ctx); err == nil {
+			resp, err = link.RetryableRPC(ctx, 5, 5*time.Second, msg)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if resp.Code != 200 {
 		return nil, ErrAMQP(*resp)
 	}
@@ -596,6 +632,15 @@ func (r *rpcClient) CancelScheduled(ctx context.Context, seq ...int64) error {
 		return err
 	}
 
+	if resp.Code == 401 {
+		if err = r.renewRPCClient(ctx); err == nil {
+			resp, err = link.RetryableRPC(ctx, 5, 5*time.Second, msg)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	if resp.Code != 200 {
 		return ErrAMQP(*resp)
 	}
@@ -632,6 +677,24 @@ func (r *rpcClient) periodicallyRefreshAuth() {
 			}
 		}
 	}()
+}
+
+func (r *rpcClient) renewRPCClient(ctx context.Context) error {
+	ctx, span := r.startSpanFromContext(ctx, "sb.rpcClient.renewRPCClient")
+	defer span.End()
+
+	if err := r.client.Close(); err != nil {
+		tab.For(ctx).Error(err)
+		return err
+	}
+
+	r.client = nil
+	if err := r.ensureConn(ctx); err != nil {
+		tab.For(ctx).Error(err)
+		return err
+	}
+
+	return nil
 }
 
 func rpcClientWithSession(sessionID *string) rpcClientOption {
